@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"database/sql"
+	"math/rand"
 	"net/http"
 	"ta-url-shortener-go/db"
 	"ta-url-shortener-go/models"
@@ -14,6 +15,22 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+// * ------------------ FUNCTION
+func GenerateRandomNumber(length int) string {
+	const char = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	var randomStr = make([]byte, length)
+
+	// Seed the random number generator to get different results each time
+	rand.Seed(time.Now().UnixNano())
+
+	for i := range randomStr {
+		randomStr[i] = char[rand.Intn(len(char))]
+	}
+
+	return string(randomStr)
+}
+
+// * ------------------ CONTROLLER
 func GetLinkMain(c *gin.Context) {
 	var linkRes models.LinkModel
 
@@ -69,5 +86,47 @@ func GetLinkMain(c *gin.Context) {
 			"long_url":  linkRes.LongLink,
 			"short_url": linkRes.ShortLink,
 		},
+	})
+}
+
+func GetAllLinks(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
+	})
+}
+
+func GetLinkSelf(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
+	})
+}
+
+func GetOneLink(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
+	})
+}
+
+func CreateLink(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
+	})
+}
+
+func EditLink(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
+	})
+}
+
+func DeleteLink(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"errors":  false,
+		"message": "",
 	})
 }

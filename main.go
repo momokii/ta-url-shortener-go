@@ -38,11 +38,12 @@ func main() {
 	apiV1 := r.Group("/api/v1")
 
 	routes.SetupAuthRoutes(apiV1.Group("/auth"))
-	// routes.SetupUserRoutes(r.Group("/user"))
+	routes.SetupUserRoutes(r.Group("/user"))
+	routes.SetupLinkRoutes(apiV1.Group("links"))
 	apiV1.GET("/:short_link", controllers.GetLinkMain)
 
 	// * start
-	port := "8888" // os.Getenv("PORT")
+	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8888"
 	}
