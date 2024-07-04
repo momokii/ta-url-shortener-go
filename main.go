@@ -38,8 +38,8 @@ func main() {
 	apiV1 := r.Group("/api/v1")
 
 	routes.SetupAuthRoutes(apiV1.Group("/auth"))
-	routes.SetupUserRoutes(r.Group("/user"))
-	routes.SetupLinkRoutes(apiV1.Group("links"))
+	routes.SetupUserRoutes(apiV1.Group("/users"))
+	routes.SetupLinkRoutes(apiV1.Group("/links"))
 	apiV1.GET("/:short_link", controllers.GetLinkMain)
 
 	// * start

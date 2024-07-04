@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -41,7 +42,7 @@ func IsAuth(c *gin.Context) {
 	}
 
 	tokenHeader = Header[1]
-	if tokenHeader != "" {
+	if tokenHeader == "" {
 		utils.ThrowErr(c, http.StatusUnauthorized, "Token not Valid")
 		c.Abort()
 		return
@@ -59,12 +60,11 @@ func IsAuth(c *gin.Context) {
 	userId := decode_token.Claims.(jwt.MapClaims)["userId"].(string)
 
 	if db_select == "sql" {
-		// * check token
-		row := db.DB.QueryRow("SELECT id, username, password, name, role, is_active, created_at, updated_at FROM users WHERE id = ?", userId)
-
 		var id int
 
-		err := row.Scan(&id, &user.Username, &user.Password, &user.Name, &user.Role, &user.IsActive, &user.CreatedAt, &user.UpdatedAt)
+		// * check token
+		err := db.DB.QueryRow("SELECT id, username, password, name, role, is_active, created_at, updated_at FROM users WHERE id = $1", userId).Scan(&id, &user.Username, &user.Password, &user.Name, &user.Role, &user.IsActive, &user.CreatedAt, &user.UpdatedAt)
+
 		if err != nil {
 			if err == sql.ErrNoRows {
 				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
@@ -79,10 +79,14 @@ func IsAuth(c *gin.Context) {
 
 	} else {
 
-		// mongodb disini
-		// var id int
+		id, err := primitive.ObjectIDFromHex(userId)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			c.Abort()
+			return
+		}
 
-		err := db.Collections.UserCollection.FindOne(context.TODO(), bson.M{"_id": userId}).Decode(&user)
+		err = db.Collections.UserCollection.FindOne(context.TODO(), bson.M{"_id": id}).Decode(&user)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
@@ -92,11 +96,6 @@ func IsAuth(c *gin.Context) {
 			c.Abort()
 			return
 		}
-
-		// Convert _id to string if needed
-		// if _, ok := user.Id.(int); ok {
-		// 	user.Id = strconv.Itoa(user.Id.(int))
-		// }
 
 	}
 
