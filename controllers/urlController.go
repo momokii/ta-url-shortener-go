@@ -16,7 +16,7 @@ import (
 )
 
 // * ------------------ FUNCTION
-func GenerateRandomNumber(length int) string {
+func GenerateRandomString(length int) string {
 	const char = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 	var randomStr = make([]byte, length)
 
