@@ -11,8 +11,8 @@ type UserModelRes struct {
 }
 
 type UserModel struct {
-	UserModelRes
-	Password  string    `json:"password" bson:"password"`
-	CreatedAt time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
+	UserModelRes `bson:",inline"` // make can inline scanning with mongo
+	Password     string           `json:"password" bson:"password"`
+	CreatedAt    time.Time        `json:"created_at" bson:"created_at"`
+	UpdatedAt    time.Time        `json:"updated_at" bson:"updated_at"`
 }

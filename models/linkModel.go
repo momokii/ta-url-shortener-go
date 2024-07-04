@@ -1,6 +1,8 @@
 package models
 
-import "time"
+import (
+	"time"
+)
 
 type LinkModel struct {
 	Id           string    `json:"id" bson:"_id"`
@@ -14,5 +16,5 @@ type LinkModel struct {
 }
 
 type LinkModelRes struct {
-	LinkModel
+	LinkModel `bson:",inline"` // make can inline scanning with mongo
 }
