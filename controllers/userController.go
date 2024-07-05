@@ -429,26 +429,31 @@ func ChangePassword(c *gin.Context) {
 			return
 		}
 
-		session.WithTransaction(c, func(ctx mongo.SessionContext) (interface{}, error) {
+		err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
+
 			id, err := primitive.ObjectIDFromHex(reqUser.(models.UserModel).Id)
 			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+				return err
 			}
 
-			_, err = db.Collections.UserCollection.UpdateOne(c, bson.M{"_id": id}, bson.M{"$set": bson.M{"password": newHashedPassword}})
+			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": bson.M{"password": newHashedPassword}})
 			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+				return err
 			}
 
-			if err = session.CommitTransaction(c); err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+			if err = session.CommitTransaction(sessionContext); err != nil {
+				return err
 			}
 
-			return nil, nil
+			return nil
 		})
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
 
 	}
 
@@ -557,21 +562,19 @@ func ChangeData(c *gin.Context) {
 			return
 		}
 
-		session.WithTransaction(c, func(ctx mongo.SessionContext) (interface{}, error) {
-			id, err := primitive.ObjectIDFromHex(userInput.UserId)
-			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+		err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
 			}
 
-			err = db.Collections.UserCollection.FindOne(c, bson.M{"_id": id}).Decode(&user)
+			id, err := primitive.ObjectIDFromHex(userInput.UserId)
 			if err != nil {
-				if err == mongo.ErrNoDocuments {
-					utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
-				} else {
-					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				}
-				return nil, err
+				return err
+			}
+
+			err = db.Collections.UserCollection.FindOne(sessionContext, bson.M{"_id": id}).Decode(&user)
+			if err != nil {
+				return err
 			}
 
 			update := bson.M{"name": userInput.Name}
@@ -579,19 +582,25 @@ func ChangeData(c *gin.Context) {
 				update["role"] = userInput.Role
 			}
 
-			_, err = db.Collections.UserCollection.UpdateOne(c, bson.M{"_id": id}, bson.M{"$set": update})
+			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": update})
 			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+				return err
 			}
 
-			if err = session.CommitTransaction(c); err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+			if err = session.CommitTransaction(sessionContext); err != nil {
+				return err
 			}
 
-			return nil, nil
+			return nil
 		})
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
+			} else {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
 
 	}
 
@@ -679,38 +688,40 @@ func ChangeStatus(c *gin.Context) {
 			return
 		}
 
-		// session.StartTransaction()
-		session.WithTransaction(c, func(ctx mongo.SessionContext) (interface{}, error) {
+		err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
+
 			id, err := primitive.ObjectIDFromHex(dataUser.Id)
 			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				c.Abort()
-				return nil, err
+				return err
 			}
 
-			err = db.Collections.UserCollection.FindOne(c, bson.M{"_id": id}).Decode(&user)
+			err = db.Collections.UserCollection.FindOne(sessionContext, bson.M{"_id": id}).Decode(&user)
 			if err != nil {
-				if err == mongo.ErrNoDocuments {
-					utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
-				} else {
-					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				}
-				return nil, err
+				return err
 			}
 
-			_, err = db.Collections.UserCollection.UpdateOne(c, bson.M{"_id": id}, bson.M{"$set": bson.M{"is_active": !user.IsActive}})
+			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": bson.M{"is_active": !user.IsActive}})
 			if err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+				return err
 			}
 
-			if err = session.CommitTransaction(c); err != nil {
-				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
-				return nil, err
+			if err = session.CommitTransaction(sessionContext); err != nil {
+				return err
 			}
 
-			return nil, nil
+			return nil
 		})
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
+			} else {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -719,7 +730,7 @@ func ChangeStatus(c *gin.Context) {
 	})
 }
 
-// TODO untested & undone
+// TODO untested
 func DeleteUser(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -727,9 +738,171 @@ func DeleteUser(c *gin.Context) {
 		UserId string `json:"user_id" binding:"required"`
 	}
 
+	var inputUser DataDeleteUser
+	var user models.UserModel
+	var userLink models.LinkModel
+	var tx *sql.Tx
+	var session mongo.Session
+
+	err := c.ShouldBindJSON(&inputUser)
+	if err != nil {
+		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	reqUser, exist := c.Get("user")
+	if !exist {
+		utils.ThrowErr(c, http.StatusUnauthorized, "Need Header Auth")
+		return
+	}
+
+	if reqUser.(models.UserModel).Id == user.Id {
+		utils.ThrowErr(c, http.StatusUnauthorized, "You can't delete your own account")
+		return
+	}
+
+	defer func() {
+		if (db_select == "sql") && (tx != nil) {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		} else if (db_select == "mongo") && (session != nil) {
+			if err != nil {
+				_ = session.AbortTransaction(c)
+			}
+			session.EndSession(c)
+		}
+	}()
+
 	if db_select == "sql" {
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		err = tx.QueryRow("SELECT id FROM users WHERE id = $1", inputUser.UserId).Scan(&user.Id)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
+			} else {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+
+		linkRows, err := tx.Query("SELECT id, long_link, short_link, user_id, total_visited FROM urls WHERE user_id = $1", user.Id)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		defer linkRows.Close()
+
+		for linkRows.Next() {
+			err := linkRows.Scan(&userLink.Id, &userLink.LongLink, &userLink.ShortLink, &userLink.UserId, &userLink.TotalVisited)
+			if err != nil {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+
+			_, err = tx.Exec("INSERT INTO urls_history (long_link, short_link, user_id, total_visited, url_id) VALUES ($1, $2, $3, $4, $5)", userLink.LongLink, userLink.ShortLink, userLink.UserId, userLink.TotalVisited, userLink.Id)
+			if err != nil {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+
+		_, err = tx.Exec("DELETE FROM urls WHERE user_id = $1", user.Id)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		_, err = tx.Exec("DELETE FROM users WHERE id = $1", user.Id)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if err = tx.Commit(); err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
 
 	} else {
+		var linksData []models.LinkModel
+
+		session, err = db.ClientM.StartSession()
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
+
+			id, err := primitive.ObjectIDFromHex(inputUser.UserId)
+			if err != nil {
+				return err
+			}
+
+			err = db.Collections.UserCollection.FindOne(sessionContext, bson.M{"_id": id}).Decode(&user)
+			if err != nil {
+				return err
+			}
+
+			links, err := db.Collections.LinkCollection.Find(sessionContext, bson.M{"user_id": id})
+			if err != nil {
+				return err
+			}
+
+			if err := links.All(c, &linksData); err != nil {
+				return err
+			}
+
+			timeNow := time.Now()
+			for _, data := range linksData {
+				_, err = db.Collections.LinkHistoryCollection.InsertOne(sessionContext, bson.M{
+					"long_link":     data.LongLink,
+					"short_link":    data.ShortLink,
+					"user_id":       data.UserId,
+					"total_visited": data.TotalVisited,
+					"url_id":        data.Id,
+					"created_at":    timeNow,
+					"updated_at":    timeNow,
+				})
+				if err != nil {
+					return err
+				}
+			}
+
+			_, err = db.Collections.LinkCollection.DeleteMany(sessionContext, bson.M{"user_id": id})
+			if err != nil {
+				return err
+			}
+
+			_, err = db.Collections.UserCollection.DeleteOne(sessionContext, bson.M{"user_id": id})
+			if err != nil {
+				return err
+			}
+
+			if err = session.CommitTransaction(sessionContext); err != nil {
+				return err
+			}
+
+			return nil
+		})
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				utils.ThrowErr(c, http.StatusUnauthorized, "User Not Found")
+			} else {
+				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
 
 	}
 
