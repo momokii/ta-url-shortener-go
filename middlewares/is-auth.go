@@ -99,6 +99,12 @@ func IsAuth(c *gin.Context) {
 
 	}
 
+	if !user.IsActive {
+		utils.ThrowErr(c, http.StatusUnauthorized, "Your account is not active")
+		c.Abort()
+		return
+	}
+
 	c.Set("userId", userId)
 	c.Set("user", user)
 	c.Set("role", user.Role)
