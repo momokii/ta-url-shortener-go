@@ -20,14 +20,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// * ------------------ FUNCTION
-// Custom password validation
-// func validatePassword(fl validator.FieldLevel) bool {
-// 	password := fl.Field().String()
-// 	re := regexp.MustCompile(`^(?=.*[0-9])(?=.*[A-Z]).{6,}$`)
-// 	return re.MatchString(password)
-// }
-
 // * ------------------ CONTROLLER
 func CheckSelf(c *gin.Context) {
 	var user models.UserModelRes
