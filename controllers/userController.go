@@ -4,15 +4,15 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
+	"strings"
 	"ta-url-shortener-go/db"
 	"ta-url-shortener-go/models"
 	"ta-url-shortener-go/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	"github.com/go-passwd/validator"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,11 +22,11 @@ import (
 
 // * ------------------ FUNCTION
 // Custom password validation
-func validatePassword(fl validator.FieldLevel) bool {
-	password := fl.Field().String()
-	re := regexp.MustCompile(`^(?=.*[0-9])(?=.*[A-Z]).{6,}$`)
-	return re.MatchString(password)
-}
+// func validatePassword(fl validator.FieldLevel) bool {
+// 	password := fl.Field().String()
+// 	re := regexp.MustCompile(`^(?=.*[0-9])(?=.*[A-Z]).{6,}$`)
+// 	return re.MatchString(password)
+// }
 
 // * ------------------ CONTROLLER
 func CheckSelf(c *gin.Context) {
@@ -254,42 +254,34 @@ func GetUserByUsername(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func CreateUser(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
 	type DataUserCreate struct {
 		Username string `json:"username" binding:"required,alphanum,min=5"`
-		Password string `json:"password" binding:"required,passwd"`
+		Password string `json:"password" binding:"required"`
 		Name     string `json:"name" binding:"required"`
 		Role     int    `json:"role" binding:"required"`
 	}
 
-	// Custom error messages
-	var customErrorMessages = map[string]string{
-		"Username": "Username must be alphanumeric and at least 5 characters long",
-		"Password": "Password atleast using 1 number and 1 uppercase with minimum length 6 characterr",
-	}
-
 	var dataUser DataUserCreate
 	var user models.UserModel
-	// Password validation function
-	validate := validator.New()
-	validate.RegisterValidation("passwd", validatePassword)
 
 	err := c.ShouldBindJSON(&dataUser)
 	if err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		if strings.Contains(err.Error(), "DataUserCreate.Username") {
+			utils.ThrowErr(c, http.StatusBadRequest, "Username minimum 5 character and alphanumeric")
+		} else {
+			utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 
-	if err := validate.Struct(dataUser); err != nil {
-		for _, err := range err.(validator.ValidationErrors) {
-			fieldName := err.Field()
-			errorMessage := customErrorMessages[fieldName]
-			utils.ThrowErr(c, http.StatusBadRequest, errorMessage)
-			return
-		}
+	passwordValidator := validator.New(validator.MinLength(6, nil), validator.ContainsAtLeast("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1, nil), validator.ContainsAtLeast("0123456789", 1, nil))
+	err = passwordValidator.Validate(dataUser.Password)
+	if err != nil {
+		utils.ThrowErr(c, http.StatusBadRequest, "Password atleast using 1 number and 1 uppercase with minimum length 6 character")
+		return
 	}
 
 	// hash password
@@ -350,13 +342,12 @@ func CreateUser(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func ChangePassword(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
 	type ChangePasswordInput struct {
 		PasswordNow string `json:"password_now" binding:"required"`
-		PasswordNew string `json:"new_password" binding:"required,passwd"`
+		PasswordNew string `json:"new_password" binding:"required"`
 	}
 	var userInput ChangePasswordInput
 	var tx *sql.Tx
@@ -370,20 +361,18 @@ func ChangePassword(c *gin.Context) {
 
 	err := c.ShouldBindJSON(&userInput)
 	if err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		utils.ThrowErr(c, http.StatusBadRequest, "Error binding input user, need input for password_now and new_password")
 		return
 	}
 
-	validate := validator.New()
-	validate.RegisterValidation("passwd", validatePassword)
-	if err := validate.Struct(userInput); err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, "Password atleast using 1 number and 1 uppercase with minimum length 6 character")
+	passwordValidator := validator.New(validator.MinLength(6, nil), validator.ContainsAtLeast("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 1, nil), validator.ContainsAtLeast("0123456789", 1, nil))
+	if err = passwordValidator.Validate(userInput.PasswordNew); err != nil {
+		utils.ThrowErr(c, http.StatusBadRequest, "New password atleast using 1 number and 1 uppercase with minimum length 6 character")
 		return
 	}
 
 	// compare password
-	err = bcrypt.CompareHashAndPassword([]byte(reqUser.(models.UserModel).Password), []byte(userInput.PasswordNow))
-	if err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(reqUser.(models.UserModel).Password), []byte(userInput.PasswordNow)); err != nil {
 		utils.ThrowErr(c, http.StatusUnauthorized, "Older password is wrong")
 		return
 	}
@@ -423,7 +412,7 @@ func ChangePassword(c *gin.Context) {
 		}
 
 	} else {
-		session, err := db.ClientM.StartSession()
+		session, err = db.ClientM.StartSession()
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
@@ -463,7 +452,6 @@ func ChangePassword(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func ChangeData(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -487,16 +475,26 @@ func ChangeData(c *gin.Context) {
 
 	err := c.ShouldBindJSON(&userInput)
 	if err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		utils.ThrowErr(c, http.StatusBadRequest, "Error binding input user, need input for user_id as string, name as string and role as integer")
 		return
 	}
 
-	if reqUser.(models.UserModel).Role == 1 {
+	if reqUser.(models.UserModel).Role != 1 {
 		userInput.UserId = reqUser.(models.UserModel).Id
 	}
 
-	if (reqUser.(models.UserModel).Role == 1) && (userInput.Role != nil) {
+	if (reqUser.(models.UserModel).Role != 1) && (userInput.Role != nil) {
 		utils.ThrowErr(c, http.StatusUnauthorized, "just admin can change role")
+		return
+	}
+
+	if (reqUser.(models.UserModel).Role != 1) && (userInput.UserId != reqUser.(models.UserModel).Id) {
+		utils.ThrowErr(c, http.StatusUnauthorized, "Just admin can change other user data")
+		return
+	}
+
+	if (reqUser.(models.UserModel).Role == 1) && ((userInput.UserId == reqUser.(models.UserModel).Id) && (userInput.Role != nil)) {
+		utils.ThrowErr(c, http.StatusUnauthorized, "Admin can't change their own role")
 		return
 	}
 
@@ -537,7 +535,7 @@ func ChangeData(c *gin.Context) {
 		if userInput.Role != nil {
 			paramIndex++
 			query += fmt.Sprintf(", role = $%d", paramIndex)
-			data = append(data, userInput.Role)
+			data = append(data, *userInput.Role)
 		}
 
 		paramIndex++
@@ -579,7 +577,7 @@ func ChangeData(c *gin.Context) {
 
 			update := bson.M{"name": userInput.Name}
 			if userInput.Role != nil {
-				update["role"] = userInput.Role
+				update["role"] = *userInput.Role
 			}
 
 			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": update})
@@ -610,7 +608,6 @@ func ChangeData(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func ChangeStatus(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -630,7 +627,7 @@ func ChangeStatus(c *gin.Context) {
 
 	err := c.ShouldBindJSON(&dataUser)
 	if err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		utils.ThrowErr(c, http.StatusBadRequest, "Error binding input user, need input for user_id as string")
 		return
 	}
 
@@ -730,7 +727,6 @@ func ChangeStatus(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func DeleteUser(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -746,7 +742,7 @@ func DeleteUser(c *gin.Context) {
 
 	err := c.ShouldBindJSON(&inputUser)
 	if err != nil {
-		utils.ThrowErr(c, http.StatusBadRequest, err.Error())
+		utils.ThrowErr(c, http.StatusBadRequest, "Error binding input user, need input for user_id as string")
 		return
 	}
 
@@ -756,7 +752,7 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
-	if reqUser.(models.UserModel).Id == user.Id {
+	if reqUser.(models.UserModel).Id == inputUser.UserId {
 		utils.ThrowErr(c, http.StatusUnauthorized, "You can't delete your own account")
 		return
 	}
@@ -780,7 +776,6 @@ func DeleteUser(c *gin.Context) {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-
 		err = tx.QueryRow("SELECT id FROM users WHERE id = $1", inputUser.UserId).Scan(&user.Id)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -791,23 +786,31 @@ func DeleteUser(c *gin.Context) {
 			return
 		}
 
-		linkRows, err := tx.Query("SELECT id, long_link, short_link, user_id, total_visited FROM urls WHERE user_id = $1", user.Id)
-		if err != nil {
+		// usingg cursor
+		if _, err := tx.Exec(`
+			DECLARE links_cursor CURSOR FOR
+			SELECT id, long_link, short_link, user_id, total_visited FROM urls WHERE user_id = $1
+			`,
+			user.Id,
+		); err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
+		defer tx.Exec("CLOSE links_cursor")
 
-		defer linkRows.Close()
-
-		for linkRows.Next() {
-			err := linkRows.Scan(&userLink.Id, &userLink.LongLink, &userLink.ShortLink, &userLink.UserId, &userLink.TotalVisited)
-			if err != nil {
+		for {
+			if err := tx.QueryRow(
+				`FETCH NEXT FROM links_cursor`,
+			).Scan(&userLink.Id, &userLink.LongLink, &userLink.ShortLink, &userLink.UserId, &userLink.TotalVisited); err != nil {
+				if err == sql.ErrNoRows {
+					// End of rows.
+					break
+				}
 				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 				return
 			}
 
-			_, err = tx.Exec("INSERT INTO urls_history (long_link, short_link, user_id, total_visited, url_id) VALUES ($1, $2, $3, $4, $5)", userLink.LongLink, userLink.ShortLink, userLink.UserId, userLink.TotalVisited, userLink.Id)
-			if err != nil {
+			if _, err := tx.Exec("INSERT INTO urls_history (long_link, short_link, user_id, total_visited, url_id) VALUES ($1, $2, $3, $4, $5)", userLink.LongLink, userLink.ShortLink, userLink.UserId, userLink.TotalVisited, userLink.Id); err != nil {
 				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -884,7 +887,7 @@ func DeleteUser(c *gin.Context) {
 				return err
 			}
 
-			_, err = db.Collections.UserCollection.DeleteOne(sessionContext, bson.M{"user_id": id})
+			_, err = db.Collections.UserCollection.DeleteOne(sessionContext, bson.M{"_id": id})
 			if err != nil {
 				return err
 			}
