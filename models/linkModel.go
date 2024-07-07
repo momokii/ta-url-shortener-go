@@ -18,3 +18,8 @@ type LinkModel struct {
 type LinkModelRes struct {
 	LinkModel `bson:",inline"` // make can inline scanning with mongo
 }
+
+type LinkModelResAll struct {
+	LinkModel `bson:",inline"` // make can inline scanning with mongo
+	User      UserModelRes     `json:"user" bson:"user"`
+}
