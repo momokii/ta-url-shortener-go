@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strconv"
 	"ta-url-shortener-go/db"
 	"ta-url-shortener-go/models"
@@ -89,11 +90,20 @@ func GetLinkMain(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func GetAllLinks(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
-	var links []models.LinkModelResAll
+	type linkRes struct {
+		Id           string              `json:"id" bson:"_id"`
+		ShortLink    string              `json:"short_link" bson:"short_link"`
+		LongLink     string              `json:"long_link" bson:"long_link"`
+		LastVisited  time.Time           `json:"last_visited" bson:"last_visited"`
+		TotalVisited int                 `json:"total_visited" bson:"total_visited"`
+		CreatedAt    time.Time           `json:"created_at" bson:"created_at"`
+		UpdatedAt    time.Time           `json:"updated_at" bson:"updated_at"`
+		User         models.UserModelRes `json:"user" bson:"user"`
+	}
+	var links []linkRes
 	var total_links int
 
 	// * pagination
@@ -106,7 +116,7 @@ func GetAllLinks(c *gin.Context) {
 		query := "SELECT a.id, a.user_id, b.username, b.name, b.role, b.is_active, a.long_link, a.short_link, a.last_visited, a.total_visited, a.created_at, a.updated_at FROM urls a left join users b on a.user_id = b.id where 1=1"
 
 		if search != "" {
-			query += " AND (short_link ILIKE '%" + search + "%' OR long_link ILIKE '%" + search + "%' ')"
+			query += " AND (short_link ILIKE '%" + search + "%' OR long_link ILIKE '%" + search + "%')"
 		}
 
 		if err := db.DB.QueryRow("select count (*) from (" + query + ") as total").Scan(&total_links); err != nil {
@@ -120,10 +130,15 @@ func GetAllLinks(c *gin.Context) {
 		} else {
 			defer userRow.Close()
 			for userRow.Next() {
-				var link models.LinkModelResAll
-				if err := userRow.Scan(&link.Id, &link.UserId, &link.User.Username, &link.User.Name, &link.User.Role, &link.User.IsActive, &link.LongLink, &link.ShortLink, &link.LastVisited, &link.TotalVisited, &link.CreatedAt, &link.UpdatedAt); err != nil {
+				var timeSql sql.NullTime
+				var link linkRes
+				if err := userRow.Scan(&link.Id, &link.User.Id, &link.User.Username, &link.User.Name, &link.User.Role, &link.User.IsActive, &link.LongLink, &link.ShortLink, &timeSql, &link.TotalVisited, &link.CreatedAt, &link.UpdatedAt); err != nil {
 					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 					return
+				}
+
+				if timeSql.Valid {
+					link.LastVisited = timeSql.Time
 				}
 
 				links = append(links, link)
@@ -157,13 +172,30 @@ func GetAllLinks(c *gin.Context) {
 		} else {
 			defer linkRows.Close(c)
 			for linkRows.Next(c) {
-				var link models.LinkModelResAll
-				if err := linkRows.Decode(&link); err != nil {
+				var linkTemp models.LinkModelResAll
+				var link linkRes
+				if err := linkRows.Decode(&linkTemp); err != nil {
 					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 					return
 				}
 
-				if err := db.Collections.UserCollection.FindOne(c, bson.M{"_id": link.UserId}).Decode(&link.User); err != nil {
+				link = linkRes{
+					Id:           linkTemp.Id,
+					ShortLink:    linkTemp.ShortLink,
+					LongLink:     linkTemp.LongLink,
+					TotalVisited: linkTemp.TotalVisited,
+					LastVisited:  linkTemp.LastVisited,
+					CreatedAt:    linkTemp.CreatedAt,
+					UpdatedAt:    linkTemp.UpdatedAt,
+				}
+
+				id, err := primitive.ObjectIDFromHex(linkTemp.UserId)
+				if err != nil {
+					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+					return
+				}
+
+				if err := db.Collections.UserCollection.FindOne(c, bson.M{"_id": id}).Decode(&link.User); err != nil {
 					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 					return
 				}
@@ -174,7 +206,7 @@ func GetAllLinks(c *gin.Context) {
 	}
 
 	if links == nil {
-		links = []models.LinkModelResAll{}
+		links = []linkRes{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -189,7 +221,6 @@ func GetAllLinks(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func GetLinkSelf(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -208,27 +239,32 @@ func GetLinkSelf(c *gin.Context) {
 	}
 
 	if db_select == "sql" {
-		query := "SELECT a.id, a.user_id, a.long_link, a.short_link, a.last_visited, a.total_visited, a.created_at, a.updated_at FROM urls a where 1=1 and user_id = $" + reqUser.(models.UserModelRes).Id
+		query := "SELECT a.id, a.user_id, a.long_link, a.short_link, a.last_visited, a.total_visited, a.created_at, a.updated_at FROM urls a WHERE user_id = $1"
 
 		if search != "" {
-			query += " AND (short_link ILIKE '%" + search + "%' OR long_link ILIKE '%" + search + "%' ')"
+			query += " AND (short_link ILIKE '%" + search + "%' OR long_link ILIKE '%" + search + "%') "
 		}
 
-		if err := db.DB.QueryRow("select count (*) from (" + query + ") as total").Scan(&total_links); err != nil {
+		if err := db.DB.QueryRow("select count (*) from ("+query+") as total", reqUser.(models.UserModel).Id).Scan(&total_links); err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		if linkRows, err := db.DB.Query(query+" ORDER BY a.id DESC LIMIT $1 OFFSET $2", size, offset); err != nil {
+		if linkRows, err := db.DB.Query(query+" ORDER BY a.id DESC LIMIT $2 OFFSET $3", reqUser.(models.UserModel).Id, size, offset); err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		} else {
 			defer linkRows.Close()
 			for linkRows.Next() {
+				var timeSql sql.NullTime
 				var link models.LinkModelRes
-				if err := linkRows.Scan(&link.Id, &link.UserId, &link.LongLink, &link.ShortLink, &link.LastVisited, &link.TotalVisited, &link.CreatedAt, &link.UpdatedAt); err != nil {
+				if err := linkRows.Scan(&link.Id, &link.UserId, &link.LongLink, &link.ShortLink, &timeSql, &link.TotalVisited, &link.CreatedAt, &link.UpdatedAt); err != nil {
 					utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 					return
+				}
+
+				if timeSql.Valid {
+					link.LastVisited = timeSql.Time
 				}
 
 				links = append(links, link)
@@ -236,7 +272,7 @@ func GetLinkSelf(c *gin.Context) {
 		}
 
 	} else {
-		id, err := primitive.ObjectIDFromHex(reqUser.(models.UserModelRes).Id)
+		id, err := primitive.ObjectIDFromHex(reqUser.(models.UserModel).Id)
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
@@ -290,7 +326,6 @@ func GetLinkSelf(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func GetOneLink(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -298,10 +333,6 @@ func GetOneLink(c *gin.Context) {
 
 	var linkRes models.LinkModelResAll
 	var linkResHistory []models.LinkHistoryModel
-	type Res struct {
-		linkRes        models.LinkModelResAll
-		linkHistoryRes []models.LinkHistoryModel
-	}
 
 	reqUser, exist := c.Get("user")
 	if !exist {
@@ -310,7 +341,8 @@ func GetOneLink(c *gin.Context) {
 	}
 
 	if db_select == "sql" {
-		if err := db.DB.QueryRow("SELECT a.id, a.user_id, b.username, b.name, b.role, b.is_active, a.long_link, a.short_link, a.last_visited, a.total_visited, a.created_at, a.updated_at FROM urls a left join users b on a.user_id = b.id where a.id = $1", url_id).Scan(&linkRes.Id, &linkRes.UserId, &linkRes.User.Username, &linkRes.User.Name, &linkRes.User.Role, &linkRes.User.IsActive, &linkRes.LongLink, &linkRes.ShortLink, &linkRes.LastVisited, &linkRes.TotalVisited, &linkRes.CreatedAt, &linkRes.UpdatedAt); err != nil {
+		var timeSql sql.NullTime
+		if err := db.DB.QueryRow("SELECT a.id, a.user_id, b.username, b.name, b.role, b.is_active, a.long_link, a.short_link, a.last_visited, a.total_visited, a.created_at, a.updated_at FROM urls a left join users b on a.user_id = b.id where a.id = $1", url_id).Scan(&linkRes.Id, &linkRes.UserId, &linkRes.User.Username, &linkRes.User.Name, &linkRes.User.Role, &linkRes.User.IsActive, &linkRes.LongLink, &linkRes.ShortLink, &timeSql, &linkRes.TotalVisited, &linkRes.CreatedAt, &linkRes.UpdatedAt); err != nil {
 			if err == sql.ErrNoRows {
 				utils.ThrowErr(c, http.StatusNotFound, "link not found")
 			} else {
@@ -318,6 +350,12 @@ func GetOneLink(c *gin.Context) {
 			}
 			return
 		}
+
+		if timeSql.Valid {
+			linkRes.LastVisited = timeSql.Time
+		}
+
+		linkRes.User.Id = linkRes.UserId
 
 		//if not admin, only can see own link
 		if (reqUser.(models.UserModel).Id != linkRes.UserId) && (reqUser.(models.UserModel).Role != 1) {
@@ -341,7 +379,13 @@ func GetOneLink(c *gin.Context) {
 		}
 
 	} else {
-		if err := db.Collections.LinkCollection.FindOne(c, bson.M{"_id": url_id}).Decode(&linkRes); err != nil {
+		id, err := primitive.ObjectIDFromHex(url_id)
+		if err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if err := db.Collections.LinkCollection.FindOne(c, bson.M{"_id": id}).Decode(&linkRes); err != nil {
 			if err == mongo.ErrNoDocuments {
 				utils.ThrowErr(c, http.StatusNotFound, "link not found")
 			} else {
@@ -350,10 +394,18 @@ func GetOneLink(c *gin.Context) {
 			return
 		}
 
-		if err := db.Collections.UserCollection.FindOne(c, bson.M{"_id": linkRes.UserId}).Decode(&linkRes.User); err != nil {
+		idUser, err := primitive.ObjectIDFromHex(linkRes.UserId)
+		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
+
+		if err := db.Collections.UserCollection.FindOne(c, bson.M{"_id": idUser}).Decode(&linkRes.User); err != nil {
+			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		linkRes.User.Id = linkRes.UserId
 
 		if (reqUser.(models.UserModel).Id != linkRes.UserId) && (reqUser.(models.UserModel).Role != 1) {
 			utils.ThrowErr(c, http.StatusUnauthorized, "you are not authorized to see this link")
@@ -373,26 +425,42 @@ func GetOneLink(c *gin.Context) {
 		}
 	}
 
-	res := Res{
-		linkRes:        linkRes,
-		linkHistoryRes: linkResHistory,
+	if linkResHistory == nil {
+		linkResHistory = []models.LinkHistoryModel{}
+	}
+
+	dataRes := gin.H{
+		"id":            linkRes.Id,
+		"short_link":    linkRes.ShortLink,
+		"long_link":     linkRes.LongLink,
+		"last_visited":  linkRes.LastVisited,
+		"total_visited": linkRes.TotalVisited,
+		"created_at":    linkRes.CreatedAt,
+		"updated_at":    linkRes.UpdatedAt,
+		"user": gin.H{
+			"id":        linkRes.User.Id,
+			"username":  linkRes.User.Username,
+			"name":      linkRes.User.Name,
+			"role":      linkRes.User.Role,
+			"is_active": linkRes.User.IsActive,
+		},
+		"history": linkResHistory,
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"errors":  false,
 		"message": "get one link data",
-		"data":    res,
+		"data":    dataRes,
 	})
 }
 
-// TODO untested
 func CreateLink(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
 	type inputNewLink struct {
-		LongUrl  string `json:"long_url" binding:"required"`
-		ShortUrl string `json:"short_url" binding:"required,alphanum,min=5"`
-		IsCustom *bool  `json:"custom_link"`
+		LongUrl  string  `json:"long_url" binding:"required"`
+		ShortUrl *string `json:"short_url"`
+		IsCustom *bool   `json:"custom_link"`
 	}
 
 	var tx *sql.Tx
@@ -409,7 +477,20 @@ func CreateLink(c *gin.Context) {
 	}
 
 	if dataNewLink.IsCustom == nil {
-		*dataNewLink.IsCustom = true
+		*dataNewLink.IsCustom = false
+	}
+
+	if (dataNewLink.ShortUrl == nil) && (*dataNewLink.IsCustom) {
+		utils.ThrowErr(c, http.StatusBadRequest, "short_url must be included if custom_link is true or not included")
+		return
+	}
+
+	if dataNewLink.ShortUrl != nil {
+		is_alphanumeric := regexp.MustCompile(`^[a-zA-Z0-9]*$`).MatchString(*dataNewLink.ShortUrl)
+		if (!is_alphanumeric) || (len(*dataNewLink.ShortUrl) < 5) {
+			utils.ThrowErr(c, http.StatusBadRequest, "short_url must be alphanumeric with minimum 5 character")
+			return
+		}
 	}
 
 	reqUser, exist := c.Get("user")
@@ -440,7 +521,7 @@ func CreateLink(c *gin.Context) {
 			return
 		}
 
-		if *dataNewLink.IsCustom {
+		if !(*dataNewLink.IsCustom) {
 			isExist := true
 			for isExist {
 				newShortLink = GenerateRandomString(7)
@@ -457,7 +538,7 @@ func CreateLink(c *gin.Context) {
 			}
 
 		} else {
-			newShortLink = dataNewLink.ShortUrl
+			newShortLink = *dataNewLink.ShortUrl
 
 			err = tx.QueryRow("SELECT short_link FROM urls WHERE short_link = $1", newShortLink).Scan(&linkCheck)
 
@@ -472,7 +553,7 @@ func CreateLink(c *gin.Context) {
 			}
 		}
 
-		if err = tx.QueryRow("INSERT INTO urls (long_link, short_link, user_id) VALUES ($1, $2, $3) RETURNING id", dataNewLink.LongUrl, dataNewLink.ShortUrl, reqUser.(models.UserModel).Id).Scan(&returnNewId); err != nil {
+		if err = tx.QueryRow("INSERT INTO urls (long_link, short_link, user_id) VALUES ($1, $2, $3) RETURNING id", dataNewLink.LongUrl, newShortLink, reqUser.(models.UserModel).Id).Scan(&returnNewId); err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -493,25 +574,28 @@ func CreateLink(c *gin.Context) {
 			return
 		}
 
-		if err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+		err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
 
-			if *dataNewLink.IsCustom {
+			if !(*dataNewLink.IsCustom) {
 				isExist := true
 				for isExist {
 					newShortLink = GenerateRandomString(7)
-				}
 
-				err := db.Collections.LinkCollection.FindOne(sessionContext, bson.M{"short_link": newShortLink}).Decode(&linkCheck)
-				if (err != nil) && (err != mongo.ErrNoDocuments) {
-					return err
-				}
+					err := db.Collections.LinkCollection.FindOne(sessionContext, bson.M{"short_link": newShortLink}).Decode(&linkCheck)
+					if (err != nil) && (err != mongo.ErrNoDocuments) {
+						return err
+					}
 
-				if err == mongo.ErrNoDocuments {
-					isExist = false
+					if err == mongo.ErrNoDocuments {
+						isExist = false
+					}
 				}
 
 			} else {
-				newShortLink = dataNewLink.ShortUrl
+				newShortLink = *dataNewLink.ShortUrl
 
 				err := db.Collections.LinkCollection.FindOne(sessionContext, bson.M{"short_link": newShortLink}).Decode(&linkCheck)
 				if (err != nil) && (err != mongo.ErrNoDocuments) {
@@ -524,10 +608,14 @@ func CreateLink(c *gin.Context) {
 			}
 
 			timeNow := time.Now()
+			userId, err := primitive.ObjectIDFromHex(reqUser.(models.UserModel).Id)
+			if err != nil {
+				return err
+			}
 			result, err := db.Collections.LinkCollection.InsertOne(sessionContext, bson.M{
 				"long_link":     dataNewLink.LongUrl,
 				"short_link":    newShortLink,
-				"user_id":       reqUser.(models.UserModel).Id,
+				"user_id":       userId,
 				"total_visited": 0,
 				"last_visited":  nil,
 				"created_at":    timeNow,
@@ -544,7 +632,8 @@ func CreateLink(c *gin.Context) {
 			}
 
 			return nil
-		}); err != nil {
+		})
+		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -562,33 +651,45 @@ func CreateLink(c *gin.Context) {
 	})
 }
 
-// TODO untested
 func EditLink(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
 	type EditLinkInput struct {
-		UrlId    string `json:"url_id" binding:"required"`
-		LongUrl  string `json:"long_url" binding:"required"`
-		ShortUrl string `json:"short_url" binding:"required,alphanum,min=5"`
-		IsCustom *bool  `json:"custom_link"`
+		UrlId    string  `json:"url_id" binding:"required"`
+		LongUrl  string  `json:"long_url" binding:"required"`
+		ShortUrl *string `json:"short_url"`
+		IsCustom *bool   `json:"custom_link"`
 	}
 
 	var tx *sql.Tx
 	var session mongo.Session
-	var EditUserInput EditLinkInput
+	var editUserInput EditLinkInput
 	var LinkCheck models.LinkModel
 	var newShortLink string
 	timeNow := time.Now()
 	newTotalVisited := 0
 
-	err := c.ShouldBindJSON(EditUserInput)
+	err := c.ShouldBindJSON(&editUserInput)
 	if err != nil {
 		utils.ThrowErr(c, http.StatusBadRequest, "input data must included url_id as string, long_url as string and short_url as string with minimum 5 character alphanumeric")
 		return
 	}
 
-	if EditUserInput.IsCustom == nil {
-		*EditUserInput.IsCustom = true
+	if editUserInput.IsCustom == nil {
+		*editUserInput.IsCustom = false
+	}
+
+	if (editUserInput.ShortUrl == nil) && (*editUserInput.IsCustom) {
+		utils.ThrowErr(c, http.StatusBadRequest, "short_url must be included if custom_link is true or not included")
+		return
+	}
+
+	if editUserInput.ShortUrl != nil {
+		is_alphanumeric := regexp.MustCompile(`^[a-zA-Z0-9]*$`).MatchString(*editUserInput.ShortUrl)
+		if (!is_alphanumeric) || (len(*editUserInput.ShortUrl) < 5) {
+			utils.ThrowErr(c, http.StatusBadRequest, "short_url must be alphanumeric with minimum 5 character")
+			return
+		}
 	}
 
 	reqUser, exist := c.Get("user")
@@ -617,7 +718,7 @@ func EditLink(c *gin.Context) {
 			return
 		}
 
-		if err = tx.QueryRow("select id, long_link, short_link, user_id, total_visited from urls where id = $1", EditUserInput.UrlId).Scan(&LinkCheck.Id, &LinkCheck.LongLink, &LinkCheck.ShortLink, &LinkCheck.UserId, &LinkCheck.TotalVisited); err != nil {
+		if err = tx.QueryRow("select id, long_link, short_link, user_id, total_visited from urls where id = $1", editUserInput.UrlId).Scan(&LinkCheck.Id, &LinkCheck.LongLink, &LinkCheck.ShortLink, &LinkCheck.UserId, &LinkCheck.TotalVisited); err != nil {
 			if err == sql.ErrNoRows {
 				utils.ThrowErr(c, http.StatusNotFound, "link not found")
 			} else {
@@ -631,7 +732,7 @@ func EditLink(c *gin.Context) {
 			}
 		}
 
-		if *EditUserInput.IsCustom {
+		if !(*editUserInput.IsCustom) {
 			isExist := true
 			for isExist {
 				newShortLink = GenerateRandomString(7)
@@ -648,24 +749,28 @@ func EditLink(c *gin.Context) {
 			}
 
 		} else {
-			newShortLink = EditUserInput.ShortUrl
+			newShortLink = *editUserInput.ShortUrl
 
-			err = tx.QueryRow("SELECT short_link FROM urls WHERE short_link = $1", newShortLink).Scan(&LinkCheck.ShortLink)
+			err = tx.QueryRow("SELECT id, short_link FROM urls WHERE short_link = $1", newShortLink).Scan(&LinkCheck.Id, &LinkCheck.ShortLink)
 			if (err != nil) && (err != sql.ErrNoRows) {
 				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 				return
 			}
 
 			if !(err == sql.ErrNoRows) {
-				utils.ThrowErr(c, http.StatusBadRequest, "Custom link already exist")
-				return
+				if LinkCheck.Id != editUserInput.UrlId {
+					utils.ThrowErr(c, http.StatusBadRequest, "Custom link already exist")
+					return
+				}
 			}
 		}
 
-		if _, err := tx.Exec("UPDATE urls SET long_link = $1, short_link = $2, updated_at = $3, total_visited = $4 WHERE id = $5", EditUserInput.LongUrl, newShortLink, timeNow, newTotalVisited, EditUserInput.UrlId); err != nil {
+		if _, err := tx.Exec("UPDATE urls SET long_link = $1, short_link = $2, updated_at = $3, total_visited = $4 WHERE id = $5", editUserInput.LongUrl, newShortLink, timeNow, newTotalVisited, editUserInput.UrlId); err != nil {
+
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
 		} else {
+
 			if _, err := tx.Exec("INSERT INTO urls_history (long_link, short_link, user_id, total_visited, url_id) VALUES ($1, $2, $3, $4, $5)", LinkCheck.LongLink, LinkCheck.ShortLink, LinkCheck.UserId, LinkCheck.TotalVisited, LinkCheck.Id); err != nil {
 				utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 				return
@@ -685,8 +790,11 @@ func EditLink(c *gin.Context) {
 		}
 
 		if err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
 
-			id, err := primitive.ObjectIDFromHex(EditUserInput.UrlId)
+			id, err := primitive.ObjectIDFromHex(editUserInput.UrlId)
 			if err != nil {
 				return err
 			}
@@ -702,7 +810,7 @@ func EditLink(c *gin.Context) {
 				}
 			}
 
-			if *EditUserInput.IsCustom {
+			if !(*editUserInput.IsCustom) {
 				isExist := true
 				for isExist {
 					newShortLink = GenerateRandomString(7)
@@ -718,7 +826,7 @@ func EditLink(c *gin.Context) {
 				}
 
 			} else {
-				newShortLink = EditUserInput.ShortUrl
+				newShortLink = *editUserInput.ShortUrl
 
 				err = db.Collections.LinkCollection.FindOne(sessionContext, bson.M{"short_link": newShortLink}).Decode(&LinkCheck)
 				if (err != nil) && (err != mongo.ErrNoDocuments) {
@@ -726,12 +834,14 @@ func EditLink(c *gin.Context) {
 				}
 
 				if !(err == mongo.ErrNoDocuments) {
-					return errors.New("Custom link already exist")
+					if LinkCheck.Id != editUserInput.UrlId {
+						return errors.New("Custom link already exist")
+					}
 				}
 			}
 
 			if _, err = db.Collections.LinkCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": bson.M{
-				"long_link":     EditUserInput.LongUrl,
+				"long_link":     editUserInput.LongUrl,
 				"short_link":    newShortLink,
 				"updated_at":    timeNow,
 				"total_visited": newTotalVisited,
@@ -765,13 +875,12 @@ func EditLink(c *gin.Context) {
 		"errors":  false,
 		"message": "success update url data",
 		"data": gin.H{
-			"long_url":  "aaa",
-			"short_url": "a",
+			"long_url":  editUserInput.LongUrl,
+			"short_url": newShortLink,
 		},
 	})
 }
 
-// TODO untested
 func DeleteLink(c *gin.Context) {
 	db_select := utils.DBSelect(c)
 
@@ -790,7 +899,7 @@ func DeleteLink(c *gin.Context) {
 		return
 	}
 
-	err := c.ShouldBindJSON(deleteInput)
+	err := c.ShouldBindJSON(&deleteInput)
 	if err != nil {
 		utils.ThrowErr(c, http.StatusBadRequest, "input data must included url_id as string")
 		return
@@ -853,6 +962,10 @@ func DeleteLink(c *gin.Context) {
 		}
 
 		if err = mongo.WithSession(c, session, func(sessionContext mongo.SessionContext) error {
+			if err = session.StartTransaction(); err != nil {
+				return err
+			}
+
 			id, err := primitive.ObjectIDFromHex(deleteInput.UrlId)
 			if err != nil {
 				return err
