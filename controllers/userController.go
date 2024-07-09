@@ -420,7 +420,7 @@ func ChangePassword(c *gin.Context) {
 				return err
 			}
 
-			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": bson.M{"password": newHashedPassword}})
+			_, err = db.Collections.UserCollection.UpdateOne(sessionContext, bson.M{"_id": id}, bson.M{"$set": bson.M{"password": string(newHashedPassword)}})
 			if err != nil {
 				return err
 			}
