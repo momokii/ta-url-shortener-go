@@ -390,7 +390,7 @@ func ChangePassword(c *gin.Context) {
 	}()
 
 	if db_select == "sql" {
-		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{})
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
@@ -504,7 +504,7 @@ func ChangeData(c *gin.Context) {
 	}()
 
 	if db_select == "sql" {
-		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{})
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
@@ -643,7 +643,7 @@ func ChangeStatus(c *gin.Context) {
 	}()
 
 	if db_select == "sql" {
-		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{})
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
@@ -763,7 +763,7 @@ func DeleteUser(c *gin.Context) {
 	}()
 
 	if db_select == "sql" {
-		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{})
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return

@@ -515,7 +515,7 @@ func CreateLink(c *gin.Context) {
 	if db_select == "sql" {
 		var returnNewId int
 
-		tx, err = db.DB.BeginTx(c, &sql.TxOptions{Isolation: sql.LevelSerializable})
+		tx, err = db.DB.BeginTx(c, &sql.TxOptions{})
 		if err != nil {
 			utils.ThrowErr(c, http.StatusInternalServerError, err.Error())
 			return
